@@ -1177,12 +1177,23 @@ defmodule IngestWeb.EditorLive do
     ~H"""
     <div
       data-ref-id={@para.ref_id}
-      class={"group flex rounded transition-colors #{cond do
+      class={"group flex items-stretch rounded transition-colors #{cond do
         MapSet.member?(@selected_refs, @para.ref_id) -> "bg-primary/5 ring-1 ring-primary/20"
         @focused_ref == @para.ref_id -> "bg-base-200"
         true -> "hover:bg-base-200/50"
       end}"}
     >
+      <%!-- Select checkbox column — outside the paragraph, far left --%>
+      <div class="w-7 shrink-0 flex items-center justify-center">
+        <input
+          type="checkbox"
+          class={"checkbox checkbox-primary rounded-full w-5 h-5 transition-opacity cursor-pointer #{if MapSet.member?(@selected_refs, @para.ref_id), do: "opacity-100", else: "opacity-0 group-hover:opacity-40 hover:!opacity-100"}"}
+          checked={MapSet.member?(@selected_refs, @para.ref_id)}
+          phx-click="toggle_select"
+          phx-value-ref-id={@para.ref_id}
+        />
+      </div>
+
       <%!-- Vet gutter — full height click target --%>
       <button
         phx-click="toggle_vet"
@@ -1209,14 +1220,6 @@ defmodule IngestWeb.EditorLive do
       <div class="flex-1 min-w-0 py-1.5 px-2">
         <%!-- Line 1: metadata --%>
         <div class="flex items-center gap-2 mb-0.5">
-          <input
-            type="checkbox"
-            class="checkbox checkbox-xs checkbox-primary opacity-0 group-hover:opacity-100 transition-opacity"
-            checked={MapSet.member?(@selected_refs, @para.ref_id)}
-            phx-click="toggle_select"
-            phx-value-ref-id={@para.ref_id}
-            style={if MapSet.member?(@selected_refs, @para.ref_id), do: "opacity: 1", else: ""}
-          />
           <span class="font-mono text-xs text-base-content/30">{@para.ref_id}</span>
           <%!-- Speaker slider --%>
           <div class="inline-flex items-center bg-base-300 rounded-full overflow-hidden">
