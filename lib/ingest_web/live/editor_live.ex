@@ -2,7 +2,7 @@ defmodule IngestWeb.EditorLive do
   use IngestWeb, :live_view
 
   alias Ingest.Store.Job
-  alias Ingest.Schema.{Book, Chapter}
+  alias Ingest.Schema.{Book, Chapter, Paragraph}
   alias Ingest.Stages.{WorkDir, Normalize}
 
   @impl true
@@ -14,11 +14,13 @@ defmodule IngestWeb.EditorLive do
         {:ok,
          socket
          |> assign(:book, book)
+         |> assign(:saved_book, book)
          |> assign(:slug, slug)
          |> assign(:source, source)
          |> assign(:selected_chapter, 1)
          |> assign(:editing_paragraph, nil)
          |> assign(:editing_chapter, nil)
+         |> assign(:focused_ref, nil)
          |> assign(:selected_refs, MapSet.new())
          |> assign(:repeated_patterns, repeated)
          |> assign(:show_patterns, false)
@@ -48,14 +50,21 @@ defmodule IngestWeb.EditorLive do
     end
   end
 
-  # -- Chapter navigation --
+  # -- Scroll-based focus --
 
   @impl true
+  def handle_event("scroll_focus", %{"ref-id" => ref_id}, socket) do
+    {:noreply, assign(socket, :focused_ref, ref_id)}
+  end
+
+  # -- Chapter navigation --
+
   def handle_event("select_chapter", %{"chapter" => chapter}, socket) do
     {:noreply,
      socket
      |> assign(:selected_chapter, String.to_integer(chapter))
      |> assign(:editing_paragraph, nil)
+     |> assign(:focused_ref, nil)
      |> assign(:selected_refs, MapSet.new())}
   end
 
@@ -216,7 +225,7 @@ defmodule IngestWeb.EditorLive do
      |> assign(:dirty, true)}
   end
 
-  # -- Chapter break insertion (the key interaction) --
+  # -- Chapter break insertion --
 
   def handle_event("insert_chapter_break", %{"ref-id" => ref_id}, socket) do
     book = socket.assigns.book
@@ -261,7 +270,6 @@ defmodule IngestWeb.EditorLive do
     book = socket.assigns.book
 
     if n > 1 do
-      # Merge this chapter into the previous one
       book = merge_chapters(book, n - 1)
 
       {:noreply,
@@ -269,7 +277,7 @@ defmodule IngestWeb.EditorLive do
        |> assign(:book, book)
        |> assign(:selected_chapter, n - 1)
        |> assign(:dirty, true)
-       |> put_flash(:info, "Chapter break removed — merged with previous")}
+       |> put_flash(:info, "Chapter break removed")}
     else
       {:noreply, put_flash(socket, :error, "Cannot remove the first chapter break")}
     end
@@ -309,6 +317,7 @@ defmodule IngestWeb.EditorLive do
 
     {:noreply,
      socket
+     |> assign(:saved_book, book)
      |> assign(:dirty, false)
      |> put_flash(:info, "Saved to #{path}")}
   end
@@ -317,6 +326,12 @@ defmodule IngestWeb.EditorLive do
 
   defp get_chapter(book, n) do
     Enum.find(book.chapters, &(&1.n == n))
+  end
+
+  defp find_paragraph(book, ref_id) do
+    book.chapters
+    |> Enum.flat_map(& &1.paragraphs)
+    |> Enum.find(&(&1.ref_id == ref_id))
   end
 
   defp update_paragraph(book, ref_id, update_fn) do
@@ -427,18 +442,72 @@ defmodule IngestWeb.EditorLive do
     |> Enum.map(fn {text, count} -> %{text: text, count: count, short: String.slice(text, 0, 80)} end)
   end
 
+  defp compute_changes(saved_book, current_book) do
+    saved_ch = Book.chapter_count(saved_book)
+    current_ch = Book.chapter_count(current_book)
+    saved_p = Book.paragraph_count(saved_book)
+    current_p = Book.paragraph_count(current_book)
+
+    saved_texts =
+      saved_book.chapters
+      |> Enum.flat_map(& &1.paragraphs)
+      |> MapSet.new(& &1.text)
+
+    current_texts =
+      current_book.chapters
+      |> Enum.flat_map(& &1.paragraphs)
+      |> MapSet.new(& &1.text)
+
+    added = MapSet.difference(current_texts, saved_texts) |> MapSet.size()
+    removed = MapSet.difference(saved_texts, current_texts) |> MapSet.size()
+
+    %{
+      ch_saved: saved_ch,
+      ch_current: current_ch,
+      p_saved: saved_p,
+      p_current: current_p,
+      added: added,
+      removed: removed,
+      has_changes: saved_ch != current_ch || saved_p != current_p || added > 0 || removed > 0
+    }
+  end
+
+  defp focused_paragraph_json(book, ref_id) do
+    case find_paragraph(book, ref_id) do
+      nil -> nil
+      para -> Paragraph.to_json(para) |> Jason.encode!(pretty: true)
+    end
+  end
+
+  defp focused_chapter_json(chapter) do
+    %{
+      "n" => chapter.n,
+      "title" => chapter.title,
+      "refId" => chapter.ref_id,
+      "paragraphCount" => length(chapter.paragraphs)
+    }
+    |> Jason.encode!(pretty: true)
+  end
+
   # -- Render --
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :chapter, get_chapter(assigns.book, assigns.selected_chapter))
-    selected_count = MapSet.size(assigns.selected_refs)
-    assigns = assign(assigns, :selected_count, selected_count)
+    chapter = get_chapter(assigns.book, assigns.selected_chapter)
+    changes = compute_changes(assigns.saved_book, assigns.book)
+
+    assigns =
+      assigns
+      |> assign(:chapter, chapter)
+      |> assign(:selected_count, MapSet.size(assigns.selected_refs))
+      |> assign(:changes, changes)
+      |> assign(:para_json, focused_paragraph_json(assigns.book, assigns.focused_ref))
+      |> assign(:ch_json, if(chapter, do: focused_chapter_json(chapter), else: nil))
 
     ~H"""
-    <IngestWeb.Layouts.app flash={@flash}>
+    <IngestWeb.Layouts.app flash={@flash} container_class="mx-auto max-w-[96rem]">
       <div class="space-y-3">
-        <%!-- Header bar --%>
+        <%!-- Header --%>
         <div class="flex items-center justify-between">
           <div>
             <h1 class="text-xl font-bold">{@slug}</h1>
@@ -457,7 +526,7 @@ defmodule IngestWeb.EditorLive do
           </div>
         </div>
 
-        <%!-- Repeated patterns (collapsible) --%>
+        <%!-- Repeated patterns --%>
         <%= if @repeated_patterns != [] do %>
           <div class="bg-base-200 rounded-lg p-3">
             <button phx-click="toggle_patterns" class="flex items-center gap-2 w-full text-left text-sm">
@@ -472,12 +541,7 @@ defmodule IngestWeb.EditorLive do
                     <span class="flex-1 font-mono text-xs truncate">{pattern.short}</span>
                     <span class="badge badge-ghost badge-xs">{pattern.count}x</span>
                     <button phx-click="select_pattern" phx-value-pattern={pattern.text} class="btn btn-ghost btn-xs">Select</button>
-                    <button
-                      phx-click="remove_pattern"
-                      phx-value-pattern={pattern.text}
-                      class="btn btn-error btn-xs"
-                      data-confirm={"Remove all #{pattern.count} occurrences?"}
-                    >Remove</button>
+                    <button phx-click="remove_pattern" phx-value-pattern={pattern.text} class="btn btn-error btn-xs" data-confirm={"Remove all #{pattern.count} occurrences?"}>Remove</button>
                   </div>
                 <% end %>
               </div>
@@ -485,17 +549,13 @@ defmodule IngestWeb.EditorLive do
           </div>
         <% end %>
 
-        <%!-- Bulk actions bar (sticky) --%>
+        <%!-- Bulk actions --%>
         <%= if @selected_count > 0 do %>
           <div class="sticky top-0 z-10 bg-base-300 rounded-lg p-2 flex items-center gap-3 shadow-lg text-sm">
             <span class="font-semibold">{@selected_count} selected</span>
             <button phx-click="select_none" class="btn btn-ghost btn-xs">Clear</button>
             <div class="divider divider-horizontal mx-0"></div>
-            <button
-              phx-click="delete_selected"
-              class="btn btn-error btn-xs"
-              data-confirm={"Delete #{@selected_count} paragraphs?"}
-            >Delete</button>
+            <button phx-click="delete_selected" class="btn btn-error btn-xs" data-confirm={"Delete #{@selected_count} paragraphs?"}>Delete</button>
             <form phx-submit="set_speaker_selected" class="flex items-center gap-1">
               <input type="text" name="speaker" placeholder="Speaker..." class="input input-bordered input-xs w-32" />
               <button type="submit" class="btn btn-xs btn-ghost">Set</button>
@@ -503,9 +563,10 @@ defmodule IngestWeb.EditorLive do
           </div>
         <% end %>
 
+        <%!-- Three-column layout --%>
         <div class="flex gap-4">
-          <%!-- Chapter sidebar (navigation) --%>
-          <div class="w-56 shrink-0">
+          <%!-- Left: Chapter sidebar --%>
+          <div class="w-48 shrink-0 hidden lg:block">
             <div class="sticky top-2">
               <h3 class="font-semibold text-xs text-base-content/50 uppercase tracking-wide mb-2">Chapters</h3>
               <ul class="space-y-0.5">
@@ -526,10 +587,10 @@ defmodule IngestWeb.EditorLive do
             </div>
           </div>
 
-          <%!-- Main content area --%>
+          <%!-- Center: Paragraph editor --%>
           <div class="flex-1 min-w-0">
             <%= if @chapter do %>
-              <%!-- Chapter divider / header --%>
+              <%!-- Chapter header --%>
               <div class="flex items-center gap-2 mb-3 pb-2 border-b-2 border-primary/30" id={"chapter-#{@chapter.n}"}>
                 <span class="text-primary font-mono text-sm font-bold">Ch. {@chapter.n}</span>
                 <%= if @editing_chapter == @chapter.n do %>
@@ -547,7 +608,7 @@ defmodule IngestWeb.EditorLive do
                     title="Click to rename"
                   >{@chapter.title}</h2>
                 <% end %>
-                <span class="text-base-content/30 text-xs">{length(@chapter.paragraphs)} paragraphs</span>
+                <span class="text-base-content/30 text-xs">{length(@chapter.paragraphs)}p</span>
                 <%= if @chapter.n > 1 do %>
                   <button
                     phx-click="remove_chapter_break"
@@ -558,14 +619,14 @@ defmodule IngestWeb.EditorLive do
                 <% end %>
               </div>
 
-              <%!-- Paragraph list with interactive gaps --%>
-              <div class="space-y-0">
+              <%!-- Paragraph list with scroll spy --%>
+              <div id="paragraph-list" phx-hook="ScrollSpy" class="space-y-0">
                 <div class="flex items-center justify-end mb-1">
                   <button phx-click="select_all_chapter" class="btn btn-ghost btn-xs text-base-content/40">Select all</button>
                 </div>
 
                 <%= for {para, idx} <- Enum.with_index(@chapter.paragraphs) do %>
-                  <%!-- Chapter break insertion gap (between paragraphs) --%>
+                  <%!-- Chapter break insertion gap --%>
                   <%= if idx > 0 do %>
                     <div
                       class="group relative h-1 -my-0.5 cursor-pointer hover:h-8 transition-all duration-150 flex items-center justify-center"
@@ -573,15 +634,14 @@ defmodule IngestWeb.EditorLive do
                       phx-value-ref-id={para.ref_id}
                     >
                       <div class="hidden group-hover:flex items-center gap-2 absolute inset-x-0 top-0 bottom-0 bg-info/10 rounded border border-dashed border-info/30 justify-center">
-                        <span class="text-info text-xs font-medium">+ Insert chapter break here</span>
+                        <span class="text-info text-xs font-medium">+ Chapter break</span>
                       </div>
                     </div>
                   <% end %>
 
-                  <%!-- Paragraph row --%>
+                  <%!-- Paragraph --%>
                   <%= if @editing_paragraph == para.ref_id do %>
-                    <%!-- Editing mode --%>
-                    <div class="bg-base-200 rounded-lg p-3 my-1">
+                    <div class="bg-base-200 rounded-lg p-3 my-1" data-ref-id={para.ref_id}>
                       <form phx-submit="save_paragraph">
                         <input type="hidden" name="ref_id" value={para.ref_id} />
                         <div class="flex gap-2 mb-2">
@@ -606,9 +666,14 @@ defmodule IngestWeb.EditorLive do
                       </form>
                     </div>
                   <% else %>
-                    <%!-- View mode — compact row --%>
-                    <div class={"group flex items-start gap-2 py-1.5 px-2 rounded hover:bg-base-200/50 transition-colors #{if MapSet.member?(@selected_refs, para.ref_id), do: "bg-primary/5 ring-1 ring-primary/20", else: ""}"}>
-                      <%!-- Checkbox --%>
+                    <div
+                      data-ref-id={para.ref_id}
+                      class={"group flex items-start gap-2 py-1.5 px-2 rounded transition-colors #{cond do
+                        MapSet.member?(@selected_refs, para.ref_id) -> "bg-primary/5 ring-1 ring-primary/20"
+                        @focused_ref == para.ref_id -> "bg-base-200"
+                        true -> "hover:bg-base-200/50"
+                      end}"}
+                    >
                       <input
                         type="checkbox"
                         class="checkbox checkbox-xs checkbox-primary mt-1 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -617,19 +682,11 @@ defmodule IngestWeb.EditorLive do
                         phx-value-ref-id={para.ref_id}
                         style={if MapSet.member?(@selected_refs, para.ref_id), do: "opacity: 1", else: ""}
                       />
-
-                      <%!-- Ref ID --%>
                       <span class="font-mono text-xs text-base-content/20 w-16 shrink-0 pt-0.5 text-right">{para.ref_id}</span>
-
-                      <%!-- Speaker badge --%>
                       <%= if para.speaker do %>
                         <span class="badge badge-xs badge-outline shrink-0 mt-0.5">{para.speaker}</span>
                       <% end %>
-
-                      <%!-- Text --%>
                       <p class="text-sm flex-1 min-w-0">{para.text}</p>
-
-                      <%!-- Hover actions --%>
                       <div class="hidden group-hover:flex gap-0.5 shrink-0">
                         <button phx-click="edit_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-xs px-1" title="Edit">
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3"><path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.05 7.475a.75.75 0 0 0-.186.312l-.9 3.15a.75.75 0 0 0 .926.926l3.15-.9a.75.75 0 0 0 .312-.186l4.963-4.963a1.75 1.75 0 0 0 0-2.475l-.827-.826ZM11.72 3.22a.25.25 0 0 1 .354 0l.826.826a.25.25 0 0 1 0 .354L8.55 8.75l-1.186.339.338-1.186L11.72 3.22Z"/></svg>
@@ -637,13 +694,7 @@ defmodule IngestWeb.EditorLive do
                         <button phx-click="merge_with_next" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-xs px-1" title="Merge with next">
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3"><path d="M2 7.75a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 7.75Z"/></svg>
                         </button>
-                        <button
-                          phx-click="delete_paragraph"
-                          phx-value-ref-id={para.ref_id}
-                          class="btn btn-ghost btn-xs px-1 text-error"
-                          title="Delete"
-                          data-confirm="Delete this paragraph?"
-                        >
+                        <button phx-click="delete_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-xs px-1 text-error" title="Delete" data-confirm="Delete this paragraph?">
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3"><path fill-rule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5A.75.75 0 0 1 9.95 6Z" clip-rule="evenodd"/></svg>
                         </button>
                       </div>
@@ -652,24 +703,97 @@ defmodule IngestWeb.EditorLive do
                 <% end %>
               </div>
 
-              <%!-- Chapter navigation footer --%>
+              <%!-- Chapter nav footer --%>
               <div class="flex items-center justify-between mt-4 pt-3 border-t border-base-200">
                 <%= if @chapter.n > 1 do %>
-                  <button phx-click="select_chapter" phx-value-chapter={@chapter.n - 1} class="btn btn-ghost btn-sm">
-                    &larr; Previous chapter
-                  </button>
+                  <button phx-click="select_chapter" phx-value-chapter={@chapter.n - 1} class="btn btn-ghost btn-sm">&larr; Prev</button>
                 <% else %>
                   <div></div>
                 <% end %>
                 <%= if @chapter.n < Book.chapter_count(@book) do %>
-                  <button phx-click="select_chapter" phx-value-chapter={@chapter.n + 1} class="btn btn-ghost btn-sm">
-                    Next chapter &rarr;
-                  </button>
+                  <button phx-click="select_chapter" phx-value-chapter={@chapter.n + 1} class="btn btn-ghost btn-sm">Next &rarr;</button>
                 <% end %>
               </div>
             <% else %>
               <p class="text-base-content/40">Select a chapter to edit.</p>
             <% end %>
+          </div>
+
+          <%!-- Right: JSON preview + diff --%>
+          <div class="w-80 shrink-0 hidden xl:block">
+            <div class="sticky top-2 space-y-3">
+              <%!-- Change summary --%>
+              <%= if @changes.has_changes do %>
+                <div class="bg-warning/10 border border-warning/20 rounded-lg p-3">
+                  <h4 class="font-semibold text-xs text-warning uppercase tracking-wide mb-2">Unsaved changes</h4>
+                  <div class="space-y-1 text-xs">
+                    <%= if @changes.ch_current != @changes.ch_saved do %>
+                      <div class="flex justify-between">
+                        <span>Chapters</span>
+                        <span>
+                          <span class="text-base-content/40">{@changes.ch_saved}</span>
+                          <span>&rarr;</span>
+                          <span class="font-semibold">{@changes.ch_current}</span>
+                          <span class={if @changes.ch_current > @changes.ch_saved, do: "text-success", else: "text-error"}>
+                            ({if @changes.ch_current > @changes.ch_saved, do: "+", else: ""}{@changes.ch_current - @changes.ch_saved})
+                          </span>
+                        </span>
+                      </div>
+                    <% end %>
+                    <%= if @changes.p_current != @changes.p_saved do %>
+                      <div class="flex justify-between">
+                        <span>Paragraphs</span>
+                        <span>
+                          <span class="text-base-content/40">{@changes.p_saved}</span>
+                          <span>&rarr;</span>
+                          <span class="font-semibold">{@changes.p_current}</span>
+                          <span class={if @changes.p_current > @changes.p_saved, do: "text-success", else: "text-error"}>
+                            ({if @changes.p_current > @changes.p_saved, do: "+", else: ""}{@changes.p_current - @changes.p_saved})
+                          </span>
+                        </span>
+                      </div>
+                    <% end %>
+                    <%= if @changes.added > 0 do %>
+                      <div class="flex justify-between">
+                        <span>New content</span>
+                        <span class="text-success">+{@changes.added} blocks</span>
+                      </div>
+                    <% end %>
+                    <%= if @changes.removed > 0 do %>
+                      <div class="flex justify-between">
+                        <span>Removed</span>
+                        <span class="text-error">-{@changes.removed} blocks</span>
+                      </div>
+                    <% end %>
+                  </div>
+                </div>
+              <% else %>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-3">
+                  <p class="text-xs text-success">All changes saved</p>
+                </div>
+              <% end %>
+
+              <%!-- Chapter JSON --%>
+              <%= if @ch_json do %>
+                <div>
+                  <h4 class="font-semibold text-xs text-base-content/50 uppercase tracking-wide mb-1">Chapter</h4>
+                  <pre class="bg-base-200 rounded-lg p-3 text-xs font-mono overflow-x-auto select-all whitespace-pre-wrap break-words">{@ch_json}</pre>
+                </div>
+              <% end %>
+
+              <%!-- Focused paragraph JSON --%>
+              <%= if @para_json do %>
+                <div>
+                  <h4 class="font-semibold text-xs text-base-content/50 uppercase tracking-wide mb-1">Paragraph <span class="text-primary">{@focused_ref}</span></h4>
+                  <pre class="bg-base-200 rounded-lg p-3 text-xs font-mono overflow-x-auto select-all whitespace-pre-wrap break-words">{@para_json}</pre>
+                </div>
+              <% else %>
+                <div>
+                  <h4 class="font-semibold text-xs text-base-content/50 uppercase tracking-wide mb-1">Paragraph</h4>
+                  <p class="text-xs text-base-content/30 italic">Scroll to focus a paragraph</p>
+                </div>
+              <% end %>
+            </div>
           </div>
         </div>
       </div>

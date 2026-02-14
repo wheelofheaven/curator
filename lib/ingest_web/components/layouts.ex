@@ -31,6 +31,8 @@ defmodule IngestWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
 
+  attr :container_class, :string, default: "mx-auto max-w-6xl"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -38,7 +40,7 @@ defmodule IngestWeb.Layouts do
     <header class="navbar px-4 sm:px-6 lg:px-8 border-b border-base-200">
       <div class="flex-1">
         <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <span class="text-lg font-bold">PDF Pipeline</span>
+          <span class="text-lg font-bold">Ingest</span>
           <span class="badge badge-sm badge-ghost">data-library</span>
         </a>
       </div>
@@ -51,8 +53,8 @@ defmodule IngestWeb.Layouts do
       </div>
     </header>
 
-    <main class="px-4 py-8 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-6xl space-y-4">
+    <main class="px-4 py-6 sm:px-6 lg:px-8">
+      <div class={[@container_class, "space-y-4"]}>
         {render_slot(@inner_block)}
       </div>
     </main>

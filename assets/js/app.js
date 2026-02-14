@@ -25,11 +25,85 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/ingest"
 import topbar from "../vendor/topbar"
 
+// Custom hooks
+const ScrollSpy = {
+  mounted() {
+    this.visibleSet = new Set()
+    this.debounce = null
+    this.currentRefId = null
+    this.setupObserver()
+  },
+
+  updated() {
+    this.setupObserver()
+  },
+
+  destroyed() {
+    if (this.observer) this.observer.disconnect()
+    if (this.debounce) clearTimeout(this.debounce)
+  },
+
+  setupObserver() {
+    if (this.observer) this.observer.disconnect()
+    this.visibleSet.clear()
+
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            this.visibleSet.add(entry.target)
+          } else {
+            this.visibleSet.delete(entry.target)
+          }
+        })
+
+        if (this.debounce) clearTimeout(this.debounce)
+        this.debounce = setTimeout(() => {
+          let topmost = null
+          let topY = Infinity
+          this.visibleSet.forEach(target => {
+            const rect = target.getBoundingClientRect()
+            if (rect.top >= 0 && rect.top < topY) {
+              topY = rect.top
+              topmost = target
+            }
+          })
+          // Fallback: if nothing has top >= 0, pick the one closest to top
+          if (!topmost) {
+            this.visibleSet.forEach(target => {
+              const rect = target.getBoundingClientRect()
+              if (Math.abs(rect.top) < Math.abs(topY)) {
+                topY = rect.top
+                topmost = target
+              }
+            })
+          }
+
+          if (topmost) {
+            const refId = topmost.dataset.refId
+            if (refId && refId !== this.currentRefId) {
+              this.currentRefId = refId
+              this.pushEvent("scroll_focus", {"ref-id": refId})
+            }
+          }
+        }, 80)
+      },
+      { threshold: 0 }
+    )
+
+    this.el.querySelectorAll("[data-ref-id]").forEach(el => {
+      this.observer.observe(el)
+    })
+  }
+}
+
+const Hooks = {...colocatedHooks, ScrollSpy}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: Hooks,
 })
 
 // Show progress bar on live navigation and form submits
