@@ -782,30 +782,31 @@ defmodule IngestWeb.EditorLive do
                   <% else %>
                     <div
                       data-ref-id={para.ref_id}
-                      class={"group flex items-start gap-2 py-1.5 px-2 rounded transition-colors #{cond do
+                      class={"group py-1.5 px-2 rounded transition-colors #{cond do
                         MapSet.member?(@selected_refs, para.ref_id) -> "bg-primary/5 ring-1 ring-primary/20"
                         @focused_ref == para.ref_id -> "bg-base-200"
                         true -> "hover:bg-base-200/50"
                       end}"}
                     >
-                      <input
-                        type="checkbox"
-                        class="checkbox checkbox-xs checkbox-primary mt-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                        checked={MapSet.member?(@selected_refs, para.ref_id)}
-                        phx-click="toggle_select"
-                        phx-value-ref-id={para.ref_id}
-                        style={if MapSet.member?(@selected_refs, para.ref_id), do: "opacity: 1", else: ""}
-                      />
-                      <span class="font-mono text-xs text-base-content/20 w-16 shrink-0 pt-0.5 text-right">{para.ref_id}</span>
-                      <%!-- Speaker badge / switcher --%>
-                      <div class="shrink-0 mt-0.5 flex items-center gap-0.5">
+                      <%!-- Line 1: metadata + actions --%>
+                      <div class="flex items-center gap-2 mb-0.5">
+                        <input
+                          type="checkbox"
+                          class="checkbox checkbox-xs checkbox-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                          checked={MapSet.member?(@selected_refs, para.ref_id)}
+                          phx-click="toggle_select"
+                          phx-value-ref-id={para.ref_id}
+                          style={if MapSet.member?(@selected_refs, para.ref_id), do: "opacity: 1", else: ""}
+                        />
+                        <span class="font-mono text-xs text-base-content/30">{para.ref_id}</span>
+                        <%!-- Speaker badge --%>
                         <%= if para.speaker do %>
                           <span class="badge badge-xs badge-outline">{para.speaker}</span>
                         <% else %>
                           <span class="badge badge-xs badge-ghost text-base-content/20">--</span>
                         <% end %>
                         <%!-- Speaker chips on hover --%>
-                        <div class="hidden group-hover:flex gap-0.5 ml-1">
+                        <div class="hidden group-hover:flex gap-0.5">
                           <%= for speaker <- @speakers do %>
                             <button
                               phx-click="set_speaker"
@@ -823,16 +824,18 @@ defmodule IngestWeb.EditorLive do
                             title="Clear speaker"
                           >&times;</button>
                         </div>
+                        <div class="flex-1"></div>
+                        <div class="hidden group-hover:flex gap-1 shrink-0">
+                          <button phx-click="edit_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-sm px-2" title="Edit">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4"><path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.05 7.475a.75.75 0 0 0-.186.312l-.9 3.15a.75.75 0 0 0 .926.926l3.15-.9a.75.75 0 0 0 .312-.186l4.963-4.963a1.75 1.75 0 0 0 0-2.475l-.827-.826ZM11.72 3.22a.25.25 0 0 1 .354 0l.826.826a.25.25 0 0 1 0 .354L8.55 8.75l-1.186.339.338-1.186L11.72 3.22Z"/></svg>
+                          </button>
+                          <button phx-click="delete_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-sm px-2 text-error" title="Delete" data-confirm="Delete this paragraph?">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4"><path fill-rule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5A.75.75 0 0 1 9.95 6Z" clip-rule="evenodd"/></svg>
+                          </button>
+                        </div>
                       </div>
-                      <p class="text-sm flex-1 min-w-0">{para.text}</p>
-                      <div class="hidden group-hover:flex gap-1 shrink-0">
-                        <button phx-click="edit_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-sm px-2" title="Edit">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4"><path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.05 7.475a.75.75 0 0 0-.186.312l-.9 3.15a.75.75 0 0 0 .926.926l3.15-.9a.75.75 0 0 0 .312-.186l4.963-4.963a1.75 1.75 0 0 0 0-2.475l-.827-.826ZM11.72 3.22a.25.25 0 0 1 .354 0l.826.826a.25.25 0 0 1 0 .354L8.55 8.75l-1.186.339.338-1.186L11.72 3.22Z"/></svg>
-                        </button>
-                        <button phx-click="delete_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-sm px-2 text-error" title="Delete" data-confirm="Delete this paragraph?">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4"><path fill-rule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5A.75.75 0 0 1 9.95 6Z" clip-rule="evenodd"/></svg>
-                        </button>
-                      </div>
+                      <%!-- Line 2: text content --%>
+                      <p class="text-sm pl-6">{para.text}</p>
                     </div>
                   <% end %>
                 <% end %>
