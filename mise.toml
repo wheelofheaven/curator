@@ -42,28 +42,28 @@ description = "Run formatter check and compile warnings"
 run = "mix format --check-formatted && mix compile --warnings-as-errors"
 
 [tasks.ingest]
-description = "Full pipeline: OCR → Normalize → Export (usage: mise run ingest -- <pdf> [--slug <slug> ...])"
-run = "mix pdf.ingest"
+description = "Full document ingestion pipeline: OCR → Normalize → Export (usage: mise run ingest -- <pdf> [--slug <slug> ...])"
+run = "mix ingest.run"
 raw = true
 
 [tasks.ocr]
-description = "Stage 1: Extract text from PDF via GLM-OCR (usage: mise run ocr -- <pdf> --slug <slug>)"
-run = "mix pdf.ocr"
+description = "Stage 1: Extract text from source document via GLM-OCR (usage: mise run ocr -- <pdf> --slug <slug>)"
+run = "mix ingest.ocr"
 raw = true
 
 [tasks.normalize]
 description = "Stage 2: Parse OCR text into structured JSON (usage: mise run normalize -- --slug <slug> --code <code> --lang <lang>)"
-run = "mix pdf.normalize"
+run = "mix ingest.normalize"
 raw = true
 
 [tasks.translate]
 description = "Stage 3: Translate book into target languages (usage: mise run translate -- --slug <slug>)"
-run = "mix pdf.translate"
+run = "mix ingest.translate"
 raw = true
 
 [tasks.export]
 description = "Stage 4: Export to data-library format (usage: mise run export -- --slug <slug>)"
-run = "mix pdf.export"
+run = "mix ingest.export"
 raw = true
 
 [tasks.clean]

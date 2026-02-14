@@ -7,7 +7,7 @@
  │                     Wheel of Heaven                          │
  │                                                              │
  │  ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐  │
- │  │ data-sources │   │ pdf-pipeline │   │  data-library    │  │
+ │  │ data-sources │   │ ingest │   │  data-library    │  │
  │  │   (private)  │──▶│  (this repo) │──▶│   (public)       │  │
  │  │              │   │              │   │                  │  │
  │  │  Source PDFs │   │  OCR, parse, │   │  Structured JSON │  │
@@ -23,7 +23,7 @@
  └──────────────────────────────────────────────────────────────┘
 ```
 
-pdf-pipeline sits between raw source material and the public data-library.
+ingest sits between raw source material and the public data-library.
 It uses the z.ai API for both OCR extraction and LLM-powered tasks
 (refinement, translation).
 
@@ -42,7 +42,7 @@ It uses the z.ai API for both OCR extraction and LLM-powered tasks
 ## Project Structure
 
 ```
-pdf-pipeline/
+ingest/
 ├── config/
 │   ├── config.exs               # Compile-time config
 │   ├── dev.exs                  # Dev settings
@@ -50,7 +50,7 @@ pdf-pipeline/
 │   └── runtime.exs              # Runtime config (env vars, API keys)
 │
 ├── lib/
-│   ├── pdf_pipeline/
+│   ├── ingest/
 │   │   ├── application.ex       # OTP supervision tree
 │   │   ├── pipeline.ex          # Top-level orchestrator
 │   │   │
@@ -98,7 +98,7 @@ pdf-pipeline/
 │   │   └── store/
 │   │       └── job.ex           #   ETS-based job state tracking
 │   │
-│   ├── pdf_pipeline_web/
+│   ├── ingest_web/
 │   │   ├── router.ex            # Routes
 │   │   └── live/
 │   │       ├── dashboard_live.ex  # Upload, job tracking, stage status
@@ -197,7 +197,7 @@ This design enables:
 
 ### Unified LLM Client
 
-`PdfPipeline.LLM.Client` provides a single interface for all LLM calls.
+`Ingest.LLM.Client` provides a single interface for all LLM calls.
 It supports two providers:
 
 | Provider  | API                     | Model         | Usage                          |
@@ -280,9 +280,9 @@ Confidence scores are used internally by the refiner but not exported.
 ## Supervision Tree
 
 ```
-PdfPipeline.Application
-└── PdfPipeline.Store.Job (GenServer)
-      ETS table :pdf_pipeline_jobs
+Ingest.Application
+└── Ingest.Store.Job (GenServer)
+      ETS table :ingest_jobs
       Broadcasts via Phoenix.PubSub "jobs" topic
 ```
 

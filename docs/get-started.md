@@ -12,8 +12,8 @@ mise will install the correct versions of Erlang and Elixir automatically.
 Clone the repo and install dependencies:
 
 ```sh
-git clone git@github.com:wheelofheaven/pdf-pipeline.git
-cd pdf-pipeline
+git clone git@github.com:wheelofheaven/ingest.git
+cd ingest
 mise install        # Installs Erlang 28 + Elixir 1.19
 mise run setup      # mix deps.get && mix compile
 ```
@@ -41,7 +41,7 @@ The pipeline expects sibling directories for data:
 
 ```
 wheelofheaven/
-  pdf-pipeline/               # This repo
+  ingest/               # This repo
   data-library/               # Output: structured JSON books
   data-sources/               # Input: source PDFs with sidecar metadata
     pdf/
@@ -169,14 +169,14 @@ Then in IEx:
 
 ```elixir
 # Check stage status
-PdfPipeline.Pipeline.status("my-book")
+Ingest.Pipeline.status("my-book")
 
 # Load and inspect a normalized book
-{:ok, json} = PdfPipeline.Stages.Normalize.load("my-book")
+{:ok, json} = Ingest.Stages.Normalize.load("my-book")
 length(json["chapters"])
 
 # Run OCR programmatically
-{:ok, result} = PdfPipeline.Stages.OCR.run("path/to/book.pdf", "my-book")
+{:ok, result} = Ingest.Stages.OCR.run("path/to/book.pdf", "my-book")
 ```
 
 ## Rule Profiles
