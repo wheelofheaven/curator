@@ -10,6 +10,7 @@ defmodule IngestWeb.EditorLive do
     case load_book(params) do
       {:ok, book, slug, source} ->
         repeated = detect_repeated_patterns(book)
+        speakers = load_speakers(book)
 
         {:ok,
          socket
@@ -17,6 +18,7 @@ defmodule IngestWeb.EditorLive do
          |> assign(:saved_book, book)
          |> assign(:slug, slug)
          |> assign(:source, source)
+         |> assign(:speakers, speakers)
          |> assign(:selected_chapter, 1)
          |> assign(:editing_paragraph, nil)
          |> assign(:editing_chapter, nil)
@@ -225,6 +227,49 @@ defmodule IngestWeb.EditorLive do
      |> assign(:dirty, true)}
   end
 
+  # -- Quick speaker set --
+
+  def handle_event("set_speaker", %{"ref-id" => ref_id, "speaker" => speaker}, socket) do
+    speaker = if speaker == "", do: nil, else: speaker
+
+    book = update_paragraph(socket.assigns.book, ref_id, fn para ->
+      %{para | speaker: speaker}
+    end)
+
+    {:noreply,
+     socket
+     |> assign(:book, book)
+     |> assign(:dirty, true)}
+  end
+
+  # -- Glue / merge paragraphs (between-paragraph action) --
+
+  def handle_event("glue_paragraphs", %{"ref-id" => ref_id}, socket) do
+    chapter_n = socket.assigns.selected_chapter
+    book = socket.assigns.book
+
+    # ref_id is the SECOND paragraph — we merge the one BEFORE it with this one
+    chapter = get_chapter(book, chapter_n)
+
+    if chapter do
+      idx = Enum.find_index(chapter.paragraphs, &(&1.ref_id == ref_id))
+
+      if idx && idx > 0 do
+        prev = Enum.at(chapter.paragraphs, idx - 1)
+        book = glue_paragraph_pair(book, chapter_n, prev.ref_id)
+
+        {:noreply,
+         socket
+         |> assign(:book, book)
+         |> assign(:dirty, true)}
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
   # -- Chapter break insertion --
 
   def handle_event("insert_chapter_break", %{"ref-id" => ref_id}, socket) do
@@ -431,6 +476,51 @@ defmodule IngestWeb.EditorLive do
     end
   end
 
+  defp load_speakers(book) do
+    # Collect speakers from all rule profiles
+    rules_speakers =
+      Path.wildcard("priv/rules/*.json")
+      |> Enum.flat_map(fn path ->
+        case File.read(path) do
+          {:ok, content} ->
+            json = Jason.decode!(content)
+            get_in(json, ["speaker_patterns", "known_speakers"]) || []
+
+          _ ->
+            []
+        end
+      end)
+
+    # Collect speakers already in the book
+    book_speakers =
+      book.chapters
+      |> Enum.flat_map(& &1.paragraphs)
+      |> Enum.map(& &1.speaker)
+      |> Enum.reject(&is_nil/1)
+
+    # Combine, deduplicate, ensure Narrator is included
+    (["Narrator"] ++ rules_speakers ++ book_speakers)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp glue_paragraph_pair(book, chapter_n, ref_id) do
+    updated_chapters =
+      Enum.map(book.chapters, fn chapter ->
+        if chapter.n == chapter_n, do: merge_paragraphs(chapter, ref_id), else: chapter
+      end)
+
+    %{book | chapters: updated_chapters} |> Book.assign_ref_ids()
+  end
+
+  defp speaker_initials(speaker) do
+    speaker
+    |> String.split(~r/\s+/)
+    |> Enum.map(&String.first/1)
+    |> Enum.join()
+    |> String.upcase()
+  end
+
   defp detect_repeated_patterns(book) do
     book.chapters
     |> Enum.flat_map(& &1.paragraphs)
@@ -626,15 +716,21 @@ defmodule IngestWeb.EditorLive do
                 </div>
 
                 <%= for {para, idx} <- Enum.with_index(@chapter.paragraphs) do %>
-                  <%!-- Chapter break insertion gap --%>
+                  <%!-- Between-paragraph zone: glue + chapter break --%>
                   <%= if idx > 0 do %>
-                    <div
-                      class="group relative h-1 -my-0.5 cursor-pointer hover:h-8 transition-all duration-150 flex items-center justify-center"
-                      phx-click="insert_chapter_break"
-                      phx-value-ref-id={para.ref_id}
-                    >
-                      <div class="hidden group-hover:flex items-center gap-2 absolute inset-x-0 top-0 bottom-0 bg-info/10 rounded border border-dashed border-info/30 justify-center">
-                        <span class="text-info text-xs font-medium">+ Chapter break</span>
+                    <div class="group relative h-1 -my-0.5 hover:h-8 transition-all duration-150 flex items-center justify-center">
+                      <div class="hidden group-hover:flex items-center gap-3 absolute inset-x-0 top-0 bottom-0 rounded justify-center">
+                        <button
+                          phx-click="glue_paragraphs"
+                          phx-value-ref-id={para.ref_id}
+                          class="btn btn-ghost btn-xs text-success border-dashed border-success/30 bg-success/10 hover:bg-success/20"
+                          title="Merge with paragraph above"
+                        >Glue</button>
+                        <button
+                          phx-click="insert_chapter_break"
+                          phx-value-ref-id={para.ref_id}
+                          class="btn btn-ghost btn-xs text-info border-dashed border-info/30 bg-info/10 hover:bg-info/20"
+                        >+ Chapter break</button>
                       </div>
                     </div>
                   <% end %>
@@ -683,19 +779,40 @@ defmodule IngestWeb.EditorLive do
                         style={if MapSet.member?(@selected_refs, para.ref_id), do: "opacity: 1", else: ""}
                       />
                       <span class="font-mono text-xs text-base-content/20 w-16 shrink-0 pt-0.5 text-right">{para.ref_id}</span>
-                      <%= if para.speaker do %>
-                        <span class="badge badge-xs badge-outline shrink-0 mt-0.5">{para.speaker}</span>
-                      <% end %>
+                      <%!-- Speaker badge / switcher --%>
+                      <div class="shrink-0 mt-0.5 flex items-center gap-0.5">
+                        <%= if para.speaker do %>
+                          <span class="badge badge-xs badge-outline">{para.speaker}</span>
+                        <% else %>
+                          <span class="badge badge-xs badge-ghost text-base-content/20">--</span>
+                        <% end %>
+                        <%!-- Speaker chips on hover --%>
+                        <div class="hidden group-hover:flex gap-0.5 ml-1">
+                          <%= for speaker <- @speakers do %>
+                            <button
+                              phx-click="set_speaker"
+                              phx-value-ref-id={para.ref_id}
+                              phx-value-speaker={speaker}
+                              class={"btn btn-xs px-1.5 min-h-0 h-5 #{if para.speaker == speaker, do: "btn-primary", else: "btn-ghost text-base-content/50"}"}
+                              title={speaker}
+                            >{speaker_initials(speaker)}</button>
+                          <% end %>
+                          <button
+                            phx-click="set_speaker"
+                            phx-value-ref-id={para.ref_id}
+                            phx-value-speaker=""
+                            class={"btn btn-xs px-1.5 min-h-0 h-5 #{if is_nil(para.speaker), do: "btn-primary", else: "btn-ghost text-base-content/30"}"}
+                            title="Clear speaker"
+                          >&times;</button>
+                        </div>
+                      </div>
                       <p class="text-sm flex-1 min-w-0">{para.text}</p>
-                      <div class="hidden group-hover:flex gap-0.5 shrink-0">
-                        <button phx-click="edit_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-xs px-1" title="Edit">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3"><path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.05 7.475a.75.75 0 0 0-.186.312l-.9 3.15a.75.75 0 0 0 .926.926l3.15-.9a.75.75 0 0 0 .312-.186l4.963-4.963a1.75 1.75 0 0 0 0-2.475l-.827-.826ZM11.72 3.22a.25.25 0 0 1 .354 0l.826.826a.25.25 0 0 1 0 .354L8.55 8.75l-1.186.339.338-1.186L11.72 3.22Z"/></svg>
+                      <div class="hidden group-hover:flex gap-1 shrink-0">
+                        <button phx-click="edit_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-sm px-2" title="Edit">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4"><path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.05 7.475a.75.75 0 0 0-.186.312l-.9 3.15a.75.75 0 0 0 .926.926l3.15-.9a.75.75 0 0 0 .312-.186l4.963-4.963a1.75 1.75 0 0 0 0-2.475l-.827-.826ZM11.72 3.22a.25.25 0 0 1 .354 0l.826.826a.25.25 0 0 1 0 .354L8.55 8.75l-1.186.339.338-1.186L11.72 3.22Z"/></svg>
                         </button>
-                        <button phx-click="merge_with_next" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-xs px-1" title="Merge with next">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3"><path d="M2 7.75a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 7.75Z"/></svg>
-                        </button>
-                        <button phx-click="delete_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-xs px-1 text-error" title="Delete" data-confirm="Delete this paragraph?">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3"><path fill-rule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5A.75.75 0 0 1 9.95 6Z" clip-rule="evenodd"/></svg>
+                        <button phx-click="delete_paragraph" phx-value-ref-id={para.ref_id} class="btn btn-ghost btn-sm px-2 text-error" title="Delete" data-confirm="Delete this paragraph?">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4"><path fill-rule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5A.75.75 0 0 1 9.95 6Z" clip-rule="evenodd"/></svg>
                         </button>
                       </div>
                     </div>
