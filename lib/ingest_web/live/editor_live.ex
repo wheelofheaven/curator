@@ -227,6 +227,24 @@ defmodule IngestWeb.EditorLive do
      |> assign(:dirty, true)}
   end
 
+  # -- Speaker list management --
+
+  def handle_event("add_speaker_option", %{"speaker" => name}, socket) do
+    name = String.trim(name)
+
+    if name != "" and name not in socket.assigns.speakers do
+      speakers = (socket.assigns.speakers ++ [name]) |> Enum.sort()
+      {:noreply, assign(socket, :speakers, speakers)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("remove_speaker_option", %{"speaker" => name}, socket) do
+    speakers = Enum.reject(socket.assigns.speakers, &(&1 == name))
+    {:noreply, assign(socket, :speakers, speakers)}
+  end
+
   # -- Quick speaker set --
 
   def handle_event("set_speaker", %{"ref-id" => ref_id, "speaker" => speaker}, socket) do
@@ -889,6 +907,28 @@ defmodule IngestWeb.EditorLive do
                   <p class="text-xs text-success">All changes saved</p>
                 </div>
               <% end %>
+
+              <%!-- Speakers --%>
+              <div>
+                <h4 class="font-semibold text-xs text-base-content/50 uppercase tracking-wide mb-1">Speakers</h4>
+                <div class="flex flex-wrap gap-1 mb-2">
+                  <%= for speaker <- @speakers do %>
+                    <div class="badge badge-sm gap-1">
+                      <span>{speaker}</span>
+                      <button
+                        phx-click="remove_speaker_option"
+                        phx-value-speaker={speaker}
+                        class="text-base-content/40 hover:text-error"
+                        title={"Remove #{speaker}"}
+                      >&times;</button>
+                    </div>
+                  <% end %>
+                </div>
+                <form phx-submit="add_speaker_option" class="flex gap-1">
+                  <input type="text" name="speaker" placeholder="Add speaker..." class="input input-bordered input-xs flex-1" />
+                  <button type="submit" class="btn btn-ghost btn-xs">Add</button>
+                </form>
+              </div>
 
               <%!-- Chapter JSON --%>
               <%= if @ch_json do %>
