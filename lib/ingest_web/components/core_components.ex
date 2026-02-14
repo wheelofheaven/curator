@@ -60,15 +60,15 @@ defmodule IngestWeb.CoreComponents do
       {@rest}
     >
       <div class={[
-        "alert w-80 sm:w-96 max-w-80 sm:max-w-96 text-wrap",
+        "alert max-w-[40rem] text-wrap",
         @kind == :info && "alert-info",
         @kind == :error && "alert-error"
       ]}>
         <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0" />
         <.icon :if={@kind == :error} name="hero-exclamation-circle" class="size-5 shrink-0" />
-        <div>
+        <div class="min-w-0">
           <p :if={@title} class="font-semibold">{@title}</p>
-          <p>{msg}</p>
+          <p class="break-all">{linkify_paths(msg)}</p>
         </div>
         <div class="flex-1" />
         <button type="button" class="group self-start cursor-pointer" aria-label={gettext("close")}>
@@ -495,4 +495,22 @@ defmodule IngestWeb.CoreComponents do
   def translate_errors(errors, field) when is_list(errors) do
     for {^field, {msg, opts}} <- errors, do: translate_error({msg, opts})
   end
+
+  defp linkify_paths(msg) when is_binary(msg) do
+    case Regex.run(~r"(/[\w/.@-]+[\w.-]+)", msg) do
+      [path | _] ->
+        [prefix, suffix] = String.split(msg, path, parts: 2)
+
+        assigns = %{prefix: prefix, path: path, suffix: suffix}
+
+        ~H"""
+        {@prefix}<a href={"file://#{@path}"} class="underline underline-offset-2 decoration-current/40 hover:decoration-current font-mono text-xs break-all">{@path}</a>{@suffix}
+        """
+
+      nil ->
+        msg
+    end
+  end
+
+  defp linkify_paths(msg), do: msg
 end
