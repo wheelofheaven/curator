@@ -15,6 +15,7 @@ defmodule PdfPipelineWeb.DashboardLive do
     jobs = Job.list()
     sources = Sources.list_sources()
     source_dir = Sources.source_dir()
+    work_slugs = scan_work_dirs()
 
     {:ok,
      socket
@@ -23,7 +24,7 @@ defmodule PdfPipelineWeb.DashboardLive do
      |> assign(:source_dir, source_dir)
      |> assign(:selected_source, nil)
      |> assign(:selected_book, nil)
-     |> assign(:work_status, %{})
+     |> assign(:work_slugs, work_slugs)
      |> assign(:form, to_form(empty_form()))
      |> allow_upload(:pdf, accept: ~w(.pdf), max_entries: 1, max_file_size: 50_000_000)}
   end
@@ -142,12 +143,6 @@ defmodule PdfPipelineWeb.DashboardLive do
     end
   end
 
-  def handle_event("check_status", %{"slug" => slug}, socket) do
-    status = Pipeline.status(slug)
-    work_status = Map.put(socket.assigns.work_status, slug, status)
-    {:noreply, assign(socket, :work_status, work_status)}
-  end
-
   def handle_event("run_stage", %{"stage" => stage, "slug" => slug} = params, socket) do
     Task.start(fn ->
       case stage do
@@ -176,7 +171,10 @@ defmodule PdfPipelineWeb.DashboardLive do
 
   @impl true
   def handle_info({:job_updated, _job}, socket) do
-    {:noreply, assign(socket, :jobs, Job.list())}
+    {:noreply,
+     socket
+     |> assign(:jobs, Job.list())
+     |> assign(:work_slugs, scan_work_dirs())}
   end
 
   # Helpers
@@ -237,8 +235,16 @@ defmodule PdfPipelineWeb.DashboardLive do
     end
   end
 
-  defp stage_icon(true), do: "text-success"
-  defp stage_icon(false), do: "text-base-content/30"
+  defp stage_badge(true), do: "badge-success"
+  defp stage_badge(false), do: "badge-ghost"
+
+  defp scan_work_dirs do
+    Stages.WorkDir.list_slugs()
+    |> Enum.map(fn slug ->
+      status = Pipeline.status(slug)
+      %{slug: slug, status: status}
+    end)
+  end
 
   @impl true
   def render(assigns) do
@@ -528,29 +534,49 @@ defmodule PdfPipelineWeb.DashboardLive do
           <% end %>
         </div>
 
-        <%!-- Work Directory Status --%>
-        <%= if @work_status != %{} do %>
+        <%!-- Work Directories --%>
+        <%= if @work_slugs != [] do %>
           <div>
-            <h2 class="text-xl font-semibold mb-4">Work Directory Status</h2>
-            <%= for {slug, status} <- @work_status do %>
-              <div class="card bg-base-200 shadow-sm mb-4">
-                <div class="card-body">
-                  <h3 class="card-title font-mono">{slug}</h3>
-                  <div class="flex gap-4">
-                    <span class={stage_icon(status.ocr)}>OCR</span>
-                    <span>→</span>
-                    <span class={stage_icon(status.normalize)}>Normalize</span>
-                    <span>→</span>
-                    <span class={stage_icon(status.translate)}>Translate</span>
-                  </div>
-                  <%= if status.artifacts != [] do %>
-                    <div class="text-sm text-base-content/60 mt-2">
-                      Artifacts: {Enum.join(status.artifacts, ", ")}
+            <h2 class="text-xl font-semibold mb-4">Work Directories</h2>
+            <p class="text-sm text-base-content/50 mb-3">
+              Intermediate artifacts in <code class="text-xs">_work/</code> — OCR results are cached and won't be re-fetched.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <%= for ws <- @work_slugs do %>
+                <div class="card bg-base-200 shadow-sm">
+                  <div class="card-body p-4">
+                    <h3 class="font-mono text-sm font-semibold">{ws.slug}</h3>
+                    <div class="flex gap-2 my-1">
+                      <span class={"badge badge-xs #{stage_badge(ws.status.ocr)}"}>OCR</span>
+                      <span class="text-base-content/30">-></span>
+                      <span class={"badge badge-xs #{stage_badge(ws.status.normalize)}"}>Normalize</span>
+                      <span class="text-base-content/30">-></span>
+                      <span class={"badge badge-xs #{stage_badge(ws.status.translate)}"}>Translate</span>
                     </div>
-                  <% end %>
+                    <div class="text-xs text-base-content/40">
+                      {Enum.join(ws.status.artifacts, ", ")}
+                    </div>
+                    <div class="card-actions justify-end mt-2">
+                      <%= if ws.status.normalize do %>
+                        <.link navigate={~p"/edit/#{ws.slug}"} class="btn btn-primary btn-xs">
+                          Edit
+                        </.link>
+                      <% end %>
+                      <%= if ws.status.ocr && !ws.status.normalize do %>
+                        <button
+                          phx-click="run_stage"
+                          phx-value-stage="normalize"
+                          phx-value-slug={ws.slug}
+                          class="btn btn-sm btn-ghost"
+                        >
+                          Normalize
+                        </button>
+                      <% end %>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            <% end %>
+              <% end %>
+            </div>
           </div>
         <% end %>
       </div>

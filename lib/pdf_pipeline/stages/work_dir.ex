@@ -1,14 +1,21 @@
 defmodule PdfPipeline.Stages.WorkDir do
   @moduledoc """
-  Manages the `_work/{slug}/` directory for intermediate pipeline artifacts.
+  Manages the work directory for intermediate pipeline artifacts.
 
-  Each stage reads from and writes to this directory:
+  Configured via `DATA_WORK_PATH` env var (default: `../pdf-work`).
+  Each slug gets a subdirectory with:
   - `ocr.md`     — Raw OCR output (markdown/text)
   - `book.json`  — Structured book after normalization
   - `book_translated.json` — Book with i18n slots filled
   """
 
-  @work_root "_work"
+  @doc """
+  Returns the configured work directory root path.
+  """
+  def root do
+    Application.get_env(:pdf_pipeline, :data_work_path, "../pdf-work")
+    |> Path.expand()
+  end
 
   @doc """
   Returns the work directory path for a given slug.
@@ -23,7 +30,7 @@ defmodule PdfPipeline.Stages.WorkDir do
   @doc """
   Returns the work directory path for a given slug (without creating it).
   """
-  def path(slug), do: Path.join(@work_root, slug)
+  def path(slug), do: Path.join(root(), slug)
 
   @doc """
   Returns the path to a specific artifact within the work directory.
@@ -70,6 +77,24 @@ defmodule PdfPipeline.Stages.WorkDir do
     case File.ls(dir) do
       {:ok, files} -> files
       {:error, _} -> []
+    end
+  end
+
+  @doc """
+  Lists all slugs that have a work directory.
+  """
+  def list_slugs do
+    r = root()
+
+    case File.ls(r) do
+      {:ok, entries} ->
+        entries
+        |> Enum.reject(&String.starts_with?(&1, "."))
+        |> Enum.filter(&File.dir?(Path.join(r, &1)))
+        |> Enum.sort()
+
+      {:error, _} ->
+        []
     end
   end
 end

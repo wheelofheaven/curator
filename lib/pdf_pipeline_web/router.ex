@@ -18,8 +18,9 @@ defmodule PdfPipelineWeb.Router do
     pipe_through :browser
 
     live "/", DashboardLive, :index
+    live "/edit/:slug", EditorLive, :edit
     live "/review/:job_id", ReviewLive, :show
-    live "/review/:job_id/edit", EditorLive, :edit
+    live "/review/:job_id/edit", EditorLive, :edit_job
     live "/review/:job_id/export", ExportLive, :export
   end
 

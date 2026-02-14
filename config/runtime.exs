@@ -22,6 +22,7 @@ config :pdf_pipeline,
   anthropic_api_key: System.get_env("ANTHROPIC_API_KEY"),
   data_library_path: System.get_env("DATA_LIBRARY_PATH", "../data-library"),
   data_sources_path: System.get_env("DATA_SOURCES_PATH", "../data-sources"),
+  data_work_path: System.get_env("DATA_WORK_PATH", "../pdf-work"),
   default_languages: ~w(en fr de es ru ja zh),
   llm_confidence_threshold: 0.7
 

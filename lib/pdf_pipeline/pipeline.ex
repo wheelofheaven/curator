@@ -27,20 +27,17 @@ defmodule PdfPipeline.Pipeline do
   @doc """
   Runs the full pipeline for a PDF file.
 
-  ## Parameters
-  - `pdf_path` — Path to the PDF file
-  - `metadata` — Map with required keys: `:slug`, `:code`, `:primary_lang`
-  - `opts` — Options:
-    - `:rules` — Rule profile name (default: "default")
-    - `:refine` — Whether to run LLM refinement (default: false)
-    - `:translate` — Whether to run translation (default: false)
-    - `:langs` — Target languages for translation
-    - `:output_dir` — Output directory for export
-    - `:job_id` — Optional existing job ID to update
+  Stages that have already completed (artifacts exist in `_work/{slug}/`)
+  are automatically skipped unless `:force` is passed.
 
-  ## Returns
-  - `{:ok, %{job_id: id, output_path: path, book: book}}` on success
-  - `{:error, reason}` on failure
+  ## Options
+  - `:rules` — Rule profile name (default: "default")
+  - `:refine` — Whether to run LLM refinement (default: false)
+  - `:translate` — Whether to run translation (default: false)
+  - `:langs` — Target languages for translation
+  - `:output_dir` — Output directory for export
+  - `:force` — Re-run all stages even if artifacts exist (default: false)
+  - `:job_id` — Optional existing job ID to update
   """
   def run(pdf_path, metadata, opts \\ []) do
     slug = metadata[:slug] || metadata.slug
@@ -56,10 +53,12 @@ defmodule PdfPipeline.Pipeline do
           id
       end
 
+    force = Keyword.get(opts, :force, false)
+
     with {:ok, _} <- Job.update(job_id, %{status: :ocr}),
-         {:ok, ocr_result} <- Stages.OCR.run(pdf_path, slug),
+         {:ok, ocr_result} <- maybe_ocr(pdf_path, slug, force, opts),
          {:ok, _} <- Job.update(job_id, %{status: :parsing, ocr_text: ocr_result.text}),
-         {:ok, norm_result} <- Stages.Normalize.run(slug, metadata, normalize_opts(opts)),
+         {:ok, norm_result} <- maybe_normalize(slug, metadata, force, opts),
          {:ok, book} <- maybe_translate(slug, norm_result.book, opts, job_id),
          {:ok, _} <- Job.update(job_id, %{status: :exporting, book: book}),
          {:ok, output_path} <- Stages.Export.run(slug, export_opts(opts)),
@@ -86,6 +85,40 @@ defmodule PdfPipeline.Pipeline do
       translate: Stages.Translate.done?(slug),
       artifacts: Stages.WorkDir.list_artifacts(slug)
     }
+  end
+
+  defp maybe_ocr(pdf_path, slug, force, opts) do
+    if !force && Stages.OCR.done?(slug) do
+      Logger.info("[Pipeline] OCR already done for #{slug}, loading from cache")
+
+      case Stages.OCR.load(slug) do
+        {:ok, text} ->
+          path = Stages.WorkDir.artifact(slug, "ocr.md")
+          {:ok, %{text: text, path: path}}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      Stages.OCR.run(pdf_path, slug, opts)
+    end
+  end
+
+  defp maybe_normalize(slug, metadata, force, opts) do
+    if !force && Stages.Normalize.done?(slug) do
+      Logger.info("[Pipeline] Normalize already done for #{slug}, loading from cache")
+
+      case Stages.Normalize.load_book(slug) do
+        {:ok, book} ->
+          path = Stages.WorkDir.artifact(slug, "book.json")
+          {:ok, %{book: book, path: path}}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      Stages.Normalize.run(slug, metadata, normalize_opts(opts))
+    end
   end
 
   defp maybe_translate(slug, book, opts, job_id) do
